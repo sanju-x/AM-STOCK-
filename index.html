@@ -1661,8 +1661,21 @@ let py = null;
 onmessage = async (e) => {
   const m = e.data;
   try{
-    if(!py){ postMessage({step:'Loading the Python engine (first time only, about 30 MB)'}); py = await loadPyodide({indexURL:'${PYO}'});
-             postMessage({step:'Loading pandas'}); await py.loadPackage(['pandas','openpyxl']); }
+    if(!py){
+      postMessage({step:'Loading the Python engine (first time only, about 30 MB)'});
+      const p = await loadPyodide({indexURL:'${PYO}'});
+      const errs = [], ok = () => { try{ p.runPython('import pandas, openpyxl'); return true; }catch(_){ return false; } };
+      for(let i = 0; i < 3 && !ok(); i++){   // loadPackage only logs download errors, so check and retry
+        postMessage({step:'Loading pandas' + (i ? ' (try ' + (i+1) + ')' : '')});
+        try{ await p.loadPackage(['numpy','python-dateutil','pytz','six','et_xmlfile','pandas','openpyxl'], {errorCallback: m => errs.push(String(m))}); }catch(x){ errs.push(String(x && x.message || x)); }
+      }
+      if(!ok()){   // last try: install through micropip
+        postMessage({step:'Loading pandas (micropip)'});
+        try{ await p.loadPackage('micropip', {errorCallback: m => errs.push(String(m))}); await p.runPythonAsync("import micropip\\nawait micropip.install(['pandas', 'openpyxl'])"); }catch(x){ errs.push(String(x && x.message || x)); }
+      }
+      if(!ok()) throw new Error('Could not load pandas in the browser. ' + (errs.slice(-3).join(' | ') || 'No error was reported; check that the browser can reach cdn.jsdelivr.net.'));
+      py = p;
+    }
     const FS = py.FS; for(const d of ['/data','/work']){ try{ FS.mkdir(d); }catch(_){} }
     for(const k in m.files) FS.writeFile('/data/'+k, new Uint8Array(m.files[k]));
     FS.writeFile('/data/meta.json', JSON.stringify(m.meta)); FS.writeFile('/work/build.py', m.buildPy); FS.writeFile('/work/files.json', m.filesJson);
